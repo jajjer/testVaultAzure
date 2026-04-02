@@ -33,7 +33,18 @@ service cloud.firestore {
     function isProjectMember(projectId) {
       return signedIn() &&
         exists(projectPath(projectId)) &&
-        request.auth.uid in get(projectPath(projectId)).data.memberIds;
+        get(projectPath(projectId)).data.memberIds.hasAny([request.auth.uid]);
+    }
+
+    /**
+     * Membership for the project document itself (read/update/delete on /projects/{id}).
+     * Uses resource.data only (no get()). For list queries, use hasAny([uid]) — it matches
+     * how Firestore validates `where("memberIds", "array-contains", uid)`; plain `uid in memberIds`
+     * often makes the query fail with PERMISSION_DENIED.
+     */
+    function isProjectDocMember() {
+      return signedIn() &&
+        resource.data.memberIds.hasAny([request.auth.uid]);
     }
 
     /**
@@ -64,16 +75,16 @@ service cloud.firestore {
 
     // --- Projects ---
     match /projects/{projectId} {
-      allow read: if isProjectMember(projectId);
+      allow read: if isProjectDocMember();
 
       allow create: if canManageQualityContent() &&
         request.resource.data.createdBy == request.auth.uid &&
-        request.auth.uid in request.resource.data.memberIds &&
+        request.resource.data.memberIds.hasAny([request.auth.uid]) &&
         request.resource.data.memberIds.size() == 1;
 
-      allow update: if isProjectMember(projectId) && canManageQualityContent();
+      allow update: if isProjectDocMember() && canManageQualityContent();
 
-      allow delete: if isProjectMember(projectId) && canManageQualityContent();
+      allow delete: if isProjectDocMember() && canManageQualityContent();
 
       // --- Suites & sections ---
       match /suites/{suiteId} {

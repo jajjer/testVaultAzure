@@ -14,6 +14,7 @@ import { useProjectStore } from "@/store/project-store";
 export function ProjectsPage() {
   const projects = useProjectStore((s) => s.projects);
   const loading = useProjectStore((s) => s.loading);
+  const loadError = useProjectStore((s) => s.error);
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
@@ -27,7 +28,19 @@ export function ProjectsPage() {
         <CreateProjectDialog />
       </div>
 
-      {loading ? (
+      {loadError ? (
+        <Card className="border-destructive/50">
+          <CardHeader>
+            <CardTitle className="text-lg text-destructive">
+              Couldn’t load projects
+            </CardTitle>
+            <CardDescription className="text-destructive/90">
+              {loadError} Check the browser console for details. If you use
+              Firestore security rules, redeploy them after changes.
+            </CardDescription>
+          </CardHeader>
+        </Card>
+      ) : loading ? (
         <p className="text-sm text-muted-foreground">Loading projects…</p>
       ) : projects.length === 0 ? (
         <Card>

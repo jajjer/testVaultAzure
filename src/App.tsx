@@ -10,7 +10,6 @@ import { ProjectDashboardPage } from "@/pages/project-dashboard-page";
 import { ProjectsPage } from "@/pages/projects-page";
 import { RegisterPage } from "@/pages/register-page";
 import { RunsPage } from "@/pages/runs-page";
-import { SuitesPage } from "@/pages/suites-page";
 import { TestCasesPage } from "@/pages/test-cases-page";
 import { useAuthStore } from "@/store/auth-store";
 
@@ -35,7 +34,6 @@ export default function App() {
             </Route>
             <Route path="/projects/:projectId" element={<ProjectLayout />}>
               <Route index element={<ProjectDashboardPage />} />
-              <Route path="suites" element={<SuitesPage />} />
               <Route path="test-cases" element={<TestCasesPage />} />
               <Route path="runs" element={<RunsPage />} />
             </Route>

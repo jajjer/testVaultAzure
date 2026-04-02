@@ -1,10 +1,5 @@
 import { NavLink, useParams } from "react-router-dom";
-import {
-  FolderTree,
-  LayoutDashboard,
-  ListChecks,
-  PlayCircle,
-} from "lucide-react";
+import { LayoutDashboard, ListChecks, PlayCircle } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -12,7 +7,6 @@ import { Separator } from "@/components/ui/separator";
 
 const nav = [
   { to: "", label: "Overview", icon: LayoutDashboard, end: true },
-  { to: "suites", label: "Suites", icon: FolderTree, end: false },
   { to: "test-cases", label: "Test Cases", icon: ListChecks, end: false },
   { to: "runs", label: "Runs", icon: PlayCircle, end: false },
 ] as const;

@@ -17,10 +17,22 @@ export interface ProjectMember {
   addedAt: number;
 }
 
+/** Optional key/value metadata for a project (e.g. environment, release, owner team). */
+export interface ProjectParameter {
+  key: string;
+  value: string;
+}
+
 export interface ProjectDoc {
   id: string;
   name: string;
   description: string;
+  parameters: ProjectParameter[];
+  /**
+   * Next case number to assign (TestRail-style C1, C2…). Updated atomically when
+   * creating a test case. Omitted on older projects until first case is created.
+   */
+  nextCaseNumber?: number;
   /** Denormalized for `array-contains` queries. */
   memberIds: string[];
   members: ProjectMember[];
@@ -75,6 +87,8 @@ export type CustomFieldValue = string | number | boolean | null;
 export interface TestCaseDoc {
   id: string;
   projectId: string;
+  /** Project-scoped human id, shown as C{caseNumber} (e.g. C1, C42). */
+  caseNumber: number;
   suiteId: string;
   sectionId: string;
   title: string;
