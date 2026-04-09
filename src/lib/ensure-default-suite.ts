@@ -1,21 +1,8 @@
-import { doc, getDoc, setDoc } from "firebase/firestore";
+import { apiJson } from "@/lib/api";
 
-import { getFirestoreDb } from "@/lib/firebase";
-import { DEFAULT_SUITE_ID } from "@/lib/test-case-defaults";
-
-/** Ensures `projects/{projectId}/suites/default` exists for section (folder) documents. */
+/** Ensures default suite exists (server-side); safe to call before section operations. */
 export async function ensureDefaultSuite(projectId: string): Promise<void> {
-  const db = getFirestoreDb();
-  const suiteRef = doc(db, "projects", projectId, "suites", DEFAULT_SUITE_ID);
-  const snap = await getDoc(suiteRef);
-  if (snap.exists()) return;
-  const now = Date.now();
-  await setDoc(suiteRef, {
-    projectId,
-    name: "Default",
-    description: "",
-    order: 0,
-    createdAt: now,
-    updatedAt: now,
+  await apiJson(`/api/projects/${projectId}/suites/ensure-default`, {
+    method: "POST",
   });
 }

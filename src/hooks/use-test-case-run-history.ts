@@ -1,7 +1,6 @@
-import { doc, getDoc } from "firebase/firestore";
 import { useEffect, useMemo, useState } from "react";
 
-import { getFirestoreDb } from "@/lib/firebase";
+import { apiJson } from "@/lib/api";
 import { getRunTestNumberForCase } from "@/lib/run-test-numbers";
 import { useTestRunStore } from "@/store/test-run-store";
 import type {
@@ -74,27 +73,27 @@ export function useTestCaseRunHistory(
     let cancelled = false;
     setOutcomesLoading(true);
 
-    (async () => {
-      const db = getFirestoreDb();
-      const snaps = await Promise.all(
-        matching.map((r) =>
-          getDoc(
-            doc(db, "projects", projectId, "runs", r.id, "results", caseId)
-          )
-        )
+    void (async () => {
+      const next: Record<string, TestResultOutcome | null> = {};
+      await Promise.all(
+        matching.map(async (r) => {
+          try {
+            const raw = await apiJson<Record<string, Record<string, unknown>>>(
+              `/api/projects/${projectId}/runs/${r.id}/results`
+            );
+            const row = raw[caseId];
+            if (!row) {
+              next[r.id] = null;
+              return;
+            }
+            const o = row.outcome;
+            next[r.id] = isOutcome(o) ? o : null;
+          } catch {
+            next[r.id] = null;
+          }
+        })
       );
       if (cancelled) return;
-
-      const next: Record<string, TestResultOutcome | null> = {};
-      snaps.forEach((snap, i) => {
-        const runId = matching[i]!.id;
-        if (!snap.exists()) {
-          next[runId] = null;
-          return;
-        }
-        const o = snap.data().outcome;
-        next[runId] = isOutcome(o) ? o : null;
-      });
       setOutcomesByRunId(next);
       setOutcomesLoading(false);
     })();
@@ -116,7 +115,6 @@ export function useTestCaseRunHistory(
 
   return {
     rows,
-    /** True while run list or result docs are still loading. */
     loading: runsLoading || outcomesLoading,
     runsLoading,
     outcomesLoading,

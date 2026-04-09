@@ -68,7 +68,7 @@ export function RunDetailPage() {
   const resultsLoading = useTestResultStore((s) => s.loading);
   const setRunResult = useTestResultStore((s) => s.setRunResult);
 
-  const firebaseUser = useAuthStore((s) => s.firebaseUser);
+  const account = useAuthStore((s) => s.account);
 
   const [savingCaseId, setSavingCaseId] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -90,7 +90,7 @@ export function RunDetailPage() {
   }, [run, caseById]);
 
   async function onOutcomeChange(caseId: string, raw: string) {
-    if (!projectId || !runId || !firebaseUser) return;
+    if (!projectId || !runId || !account) return;
     setSaveError(null);
     const outcome =
       raw === ""
@@ -100,7 +100,7 @@ export function RunDetailPage() {
     try {
       await setRunResult(projectId, runId, caseId, {
         outcome,
-        executedByUid: firebaseUser.uid,
+        executedByUid: account.localAccountId,
       });
     } catch (e) {
       console.error(e);
@@ -119,7 +119,7 @@ export function RunDetailPage() {
   }
 
   const backToRuns = `/projects/${projectId}/runs`;
-  const canRecord = !!firebaseUser;
+  const canRecord = !!account;
 
   function caseEditorHref(caseId: string) {
     const returnPath = `/projects/${projectId}/runs/${runId}`;

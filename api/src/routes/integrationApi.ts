@@ -1,11 +1,9 @@
-import type { Request, Response } from "express";
-import { Router } from "express";
-import type { Firestore } from "firebase-admin/firestore";
+import type { Request, Response, Router } from "express";
+import { Router as createRouter } from "express";
 
-import { createTestRun, loadRun } from "../lib/createRun.js";
-import { resolveCaseNumbersToIds } from "../lib/resolveCaseNumbers.js";
 import { caseIdForRunTestNumber } from "../lib/runTestNumber.js";
-import { createApiKeyMiddleware } from "../middleware/apiKeyAuth.js";
+import { createApiKeyMiddleware } from "../middleware/apiKey.js";
+import * as repo from "../sqlRepo.js";
 
 const OUTCOMES = new Set([
   "passed",
@@ -19,12 +17,10 @@ function isOutcome(v: unknown): v is string {
   return typeof v === "string" && OUTCOMES.has(v);
 }
 
-/**
- * Routes under `/api/v1/projects/:projectId/*` so `projectId` is always in req.params.
- */
-export function createProjectApiRouter(db: Firestore): Router {
-  const r = Router({ mergeParams: true });
-  r.use(createApiKeyMiddleware({ db }));
+export function createIntegrationRouter(): Router {
+  const r = createRouter({ mergeParams: true });
+  const apiKey = createApiKeyMiddleware();
+  r.use(apiKey);
 
   r.post("/runs", async (req: Request, res: Response) => {
     try {
@@ -51,7 +47,7 @@ export function createProjectApiRouter(db: Firestore): Router {
       }
       if (!hasIds && !hasNums) {
         res.status(400).json({
-          error: "Provide caseIds (Firestore ids) or caseNumbers (e.g. 1 for C1)",
+          error: "Provide caseIds or caseNumbers",
         });
         return;
       }
@@ -75,8 +71,7 @@ export function createProjectApiRouter(db: Firestore): Router {
         for (const x of raw) {
           if (typeof x !== "number" || !Number.isInteger(x) || x < 1) {
             res.status(400).json({
-              error:
-                "Each caseNumbers entry must be a positive integer (C number)",
+              error: "Each caseNumbers entry must be a positive integer",
             });
             return;
           }
@@ -86,16 +81,16 @@ export function createProjectApiRouter(db: Firestore): Router {
           res.status(400).json({ error: "caseNumbers must be non-empty" });
           return;
         }
-        caseIds = await resolveCaseNumbersToIds(db, projectId, nums);
+        caseIds = await repo.resolveCaseNumbersToIds(projectId, nums);
       }
 
-      const runId = await createTestRun(db, projectId, {
+      const runId = await repo.createTestRun(projectId, {
         name,
         caseIds,
         createdBy: "integration",
       });
 
-      const run = await loadRun(db, projectId, runId);
+      const run = await repo.loadRun(projectId, runId);
       res.status(201).json({
         runId,
         name,
@@ -117,7 +112,7 @@ export function createProjectApiRouter(db: Firestore): Router {
     try {
       const projectId = req.params.projectId as string;
       const runId = req.params.runId as string;
-      const run = await loadRun(db, projectId, runId);
+      const run = await repo.loadRun(projectId, runId);
       if (!run) {
         res.status(404).json({ error: "Run not found" });
         return;
@@ -140,7 +135,7 @@ export function createProjectApiRouter(db: Firestore): Router {
       const projectId = req.params.projectId as string;
       const runId = req.params.runId as string;
 
-      const run = await loadRun(db, projectId, runId);
+      const run = await repo.loadRun(projectId, runId);
       if (!run) {
         res.status(404).json({ error: "Run not found" });
         return;
@@ -224,7 +219,6 @@ export function createProjectApiRouter(db: Firestore): Router {
         return;
       }
 
-      const now = Date.now();
       const written: { runTestNumber: number; caseId: string }[] = [];
 
       for (const row of rows) {
@@ -239,39 +233,10 @@ export function createProjectApiRouter(db: Firestore): Router {
           return;
         }
 
-        const ref = db
-          .collection("projects")
-          .doc(projectId)
-          .collection("runs")
-          .doc(runId)
-          .collection("results")
-          .doc(caseId);
-
-        const prevSnap = await ref.get();
-        const prev = prevSnap.exists ? prevSnap.data()! : {};
-        const prevAttachments = Array.isArray(prev.attachments)
-          ? prev.attachments
-          : [];
-
-        const comment =
-          row.comment !== undefined
-            ? row.comment
-            : String(prev.comment ?? "");
-
-        await ref.set(
-          {
-            caseId,
-            runId,
-            projectId,
-            outcome: row.outcome,
-            comment,
-            attachments: prevAttachments,
-            executedBy: "integration",
-            executedAt: now,
-            updatedAt: now,
-          },
-          { merge: true }
-        );
+        await repo.upsertRunResultFromIntegration(projectId, runId, caseId, {
+          outcome: row.outcome,
+          comment: row.comment,
+        });
 
         written.push({ runTestNumber: row.runTestNumber, caseId });
       }

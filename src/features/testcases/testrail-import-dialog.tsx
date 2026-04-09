@@ -41,7 +41,7 @@ export function TestRailImportDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const firebaseUser = useAuthStore((s) => s.firebaseUser);
+  const account = useAuthStore((s) => s.account);
   const createTestCase = useTestCaseStore((s) => s.createTestCase);
   const cases = useTestCaseStore((s) => s.cases);
 
@@ -118,7 +118,7 @@ export function TestRailImportDialog({
   }
 
   async function onImport() {
-    if (!csvText || !firebaseUser) return;
+    if (!csvText || !account) return;
     setImportError(null);
     setImportDone(null);
     setImporting(true);
@@ -157,7 +157,7 @@ export function TestRailImportDialog({
           status: row.status,
           customFields: row.customFields,
           sectionId,
-          createdBy: firebaseUser.uid,
+          createdBy: account.localAccountId,
           order: baseOrder + i,
         });
         n += 1;
@@ -176,7 +176,7 @@ export function TestRailImportDialog({
   const canImport =
     preview.kind === "ready" &&
     preview.count > 0 &&
-    !!firebaseUser &&
+    !!account &&
     !importing &&
     importDone === null;
 

@@ -1,17 +1,6 @@
-import {
-  collection,
-  deleteDoc,
-  doc,
-  onSnapshot,
-  orderBy,
-  query,
-  runTransaction,
-  updateDoc,
-  type Unsubscribe,
-} from "firebase/firestore";
 import { create } from "zustand";
 
-import { getFirestoreDb } from "@/lib/firebase";
+import { apiJson } from "@/lib/api";
 import {
   DEFAULT_SECTION_ID,
   DEFAULT_SUITE_ID,
@@ -21,7 +10,7 @@ import type { TestCaseDoc, TestCaseStep } from "@/types/models";
 interface TestCaseState {
   cases: TestCaseDoc[];
   loading: boolean;
-  listen: (projectId: string) => Unsubscribe;
+  listen: (projectId: string) => () => void;
   stop: () => void;
   createTestCase: (
     projectId: string,
@@ -35,7 +24,6 @@ interface TestCaseState {
       customFields: TestCaseDoc["customFields"];
       sectionId: string;
       createdBy: string;
-      /** When set (e.g. bulk import), avoids stale order from the live listener. */
       order?: number;
     }
   ) => Promise<string>;
@@ -55,7 +43,6 @@ interface TestCaseState {
     }
   ) => Promise<void>;
   deleteTestCase: (projectId: string, caseId: string) => Promise<void>;
-  /** Move case to a folder (or default bucket for “no folder”). */
   moveTestCaseToFolder: (
     projectId: string,
     caseId: string,
@@ -63,35 +50,30 @@ interface TestCaseState {
   ) => Promise<void>;
 }
 
-let activeUnsub: Unsubscribe | null = null;
+let pollTimer: ReturnType<typeof setInterval> | null = null;
 let lastListenProjectId: string | null = null;
 
-function normalizeCase(
-  id: string,
-  data: Record<string, unknown>
-): TestCaseDoc {
-  const d = data as Partial<TestCaseDoc>;
+function mapRow(row: Record<string, unknown>): TestCaseDoc {
   return {
-    id,
-    projectId: String(d.projectId ?? ""),
-    caseNumber:
-      typeof d.caseNumber === "number" && d.caseNumber >= 1 ? d.caseNumber : 0,
-    suiteId: String(d.suiteId ?? DEFAULT_SUITE_ID),
-    sectionId: String(d.sectionId ?? DEFAULT_SECTION_ID),
-    title: String(d.title ?? ""),
-    preconditions: String(d.preconditions ?? ""),
-    steps: Array.isArray(d.steps) ? (d.steps as TestCaseStep[]) : [],
-    priority: (d.priority ?? "medium") as TestCaseDoc["priority"],
-    type: (d.type ?? "functional") as TestCaseDoc["type"],
-    status: (d.status ?? "draft") as TestCaseDoc["status"],
+    id: String(row.id),
+    projectId: String(row.projectId),
+    caseNumber: Number(row.caseNumber ?? 0),
+    suiteId: String(row.suiteId ?? DEFAULT_SUITE_ID),
+    sectionId: String(row.sectionId ?? DEFAULT_SECTION_ID),
+    title: String(row.title ?? ""),
+    preconditions: String(row.preconditions ?? ""),
+    steps: Array.isArray(row.steps) ? (row.steps as TestCaseStep[]) : [],
+    priority: (row.priority ?? "medium") as TestCaseDoc["priority"],
+    type: (row.type ?? "functional") as TestCaseDoc["type"],
+    status: (row.status ?? "draft") as TestCaseDoc["status"],
     customFields:
-      d.customFields && typeof d.customFields === "object"
-        ? (d.customFields as TestCaseDoc["customFields"])
+      row.customFields && typeof row.customFields === "object"
+        ? (row.customFields as TestCaseDoc["customFields"])
         : {},
-    order: typeof d.order === "number" ? d.order : 0,
-    createdBy: String(d.createdBy ?? ""),
-    createdAt: typeof d.createdAt === "number" ? d.createdAt : 0,
-    updatedAt: typeof d.updatedAt === "number" ? d.updatedAt : 0,
+    order: typeof row.order === "number" ? row.order : 0,
+    createdBy: String(row.createdBy ?? ""),
+    createdAt: Number(row.createdAt ?? 0),
+    updatedAt: Number(row.updatedAt ?? 0),
   };
 }
 
@@ -100,9 +82,9 @@ export const useTestCaseStore = create<TestCaseState>((set, get) => ({
   loading: true,
 
   listen: (projectId: string) => {
-    if (activeUnsub) {
-      activeUnsub();
-      activeUnsub = null;
+    if (pollTimer) {
+      clearInterval(pollTimer);
+      pollTimer = null;
     }
     if (lastListenProjectId !== projectId) {
       set({ cases: [], loading: true });
@@ -111,95 +93,63 @@ export const useTestCaseStore = create<TestCaseState>((set, get) => ({
       set({ loading: true });
     }
 
-    const q = query(
-      collection(getFirestoreDb(), "projects", projectId, "testcases"),
-      orderBy("order", "asc")
-    );
-    const unsub = onSnapshot(
-      q,
-      (snap) => {
-        const cases: TestCaseDoc[] = snap.docs.map((d) =>
-          normalizeCase(d.id, d.data())
-        );
-        set({ cases, loading: false });
-      },
-      (err) => {
-        console.error("[TestVault] test cases listener:", err);
-        set({ loading: false });
+    const tick = () => {
+      void apiJson<Record<string, unknown>[]>(
+        `/api/projects/${projectId}/test-cases`
+      )
+        .then((rows) => {
+          const cases = rows.map((r) => mapRow(r));
+          set({ cases, loading: false });
+        })
+        .catch(() => set({ loading: false }));
+    };
+    tick();
+    pollTimer = setInterval(tick, 3000);
+
+    return () => {
+      if (pollTimer) {
+        clearInterval(pollTimer);
+        pollTimer = null;
       }
-    );
-    activeUnsub = unsub;
-    return unsub;
+    };
   },
 
   stop: () => {
     lastListenProjectId = null;
-    if (activeUnsub) {
-      activeUnsub();
-      activeUnsub = null;
+    if (pollTimer) {
+      clearInterval(pollTimer);
+      pollTimer = null;
     }
     set({ cases: [], loading: true });
   },
 
   createTestCase: async (projectId, input) => {
-    const db = getFirestoreDb();
-    const now = Date.now();
-    const existing = get().cases;
-    const nextOrder =
-      typeof input.order === "number" && input.order >= 0
-        ? input.order
-        : existing.length === 0
-          ? 0
-          : Math.max(...existing.map((c) => c.order)) + 1;
-
-    const newCaseRef = doc(
-      collection(db, "projects", projectId, "testcases")
-    );
-
-    await runTransaction(db, async (transaction) => {
-      const projectRef = doc(db, "projects", projectId);
-      const projectSnap = await transaction.get(projectRef);
-      if (!projectSnap.exists()) {
-        throw new Error("Project not found");
+    const res = await apiJson<{ id: string }>(
+      `/api/projects/${projectId}/test-cases`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: input.title,
+          preconditions: input.preconditions,
+          steps: input.steps,
+          priority: input.priority,
+          type: input.type,
+          status: input.status,
+          customFields: input.customFields,
+          sectionId: input.sectionId,
+          order: input.order,
+        }),
       }
-      const pdata = projectSnap.data();
-      const nextNum =
-        typeof pdata.nextCaseNumber === "number" && pdata.nextCaseNumber >= 1
-          ? pdata.nextCaseNumber
-          : 1;
-
-      transaction.set(newCaseRef, {
-        projectId,
-        caseNumber: nextNum,
-        suiteId: DEFAULT_SUITE_ID,
-        sectionId: input.sectionId,
-        title: input.title,
-        preconditions: input.preconditions,
-        steps: input.steps,
-        priority: input.priority,
-        type: input.type,
-        status: input.status,
-        customFields: input.customFields,
-        order: nextOrder,
-        createdBy: input.createdBy,
-        createdAt: now,
-        updatedAt: now,
-      });
-
-      transaction.update(projectRef, {
-        nextCaseNumber: nextNum + 1,
-        updatedAt: now,
-      });
-    });
-
-    return newCaseRef.id;
+    );
+    return res.id;
   },
 
   updateTestCase: async (projectId, caseId, input) => {
-    const now = Date.now();
-    await updateDoc(
-      doc(getFirestoreDb(), "projects", projectId, "testcases", caseId),
-      {
+    await apiJson(`/api/projects/${projectId}/test-cases/${caseId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
         title: input.title,
         preconditions: input.preconditions,
         steps: input.steps,
@@ -209,22 +159,33 @@ export const useTestCaseStore = create<TestCaseState>((set, get) => ({
         customFields: input.customFields,
         sectionId: input.sectionId,
         order: input.order,
-        updatedAt: now,
-      }
-    );
+      }),
+    });
   },
 
   deleteTestCase: async (projectId, caseId) => {
-    await deleteDoc(
-      doc(getFirestoreDb(), "projects", projectId, "testcases", caseId)
-    );
+    await apiJson(`/api/projects/${projectId}/test-cases/${caseId}`, {
+      method: "DELETE",
+    });
   },
 
   moveTestCaseToFolder: async (projectId, caseId, sectionId) => {
-    const now = Date.now();
-    await updateDoc(
-      doc(getFirestoreDb(), "projects", projectId, "testcases", caseId),
-      { sectionId, updatedAt: now }
-    );
+    const c = get().cases.find((x) => x.id === caseId);
+    if (!c) return;
+    await apiJson(`/api/projects/${projectId}/test-cases/${caseId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: c.title,
+        preconditions: c.preconditions,
+        steps: c.steps,
+        priority: c.priority,
+        type: c.type,
+        status: c.status,
+        customFields: c.customFields,
+        sectionId,
+        order: c.order,
+      }),
+    });
   },
 }));

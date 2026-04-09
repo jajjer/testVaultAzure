@@ -1,12 +1,10 @@
-import * as crypto from "crypto";
+import * as crypto from "node:crypto";
 
 import type { NextFunction, Request, Response } from "express";
 
-import type { Firestore } from "firebase-admin/firestore";
+import * as repo from "../sqlRepo.js";
 
-const COLLECTION = "integrationApiKeys";
-
-function hashApiKey(secret: string): string {
+export function hashApiKey(secret: string): string {
   return crypto.createHash("sha256").update(secret, "utf8").digest("hex");
 }
 
@@ -17,15 +15,7 @@ function extractBearer(req: Request): string | undefined {
   return m ? m[1]!.trim() : undefined;
 }
 
-export interface ApiKeyAuthOptions {
-  db: Firestore;
-}
-
-/**
- * Validates `Authorization: Bearer <key>` or `X-TestVault-Api-Key` against
- * `integrationApiKeys/{sha256(key)}` and checks `projectId` matches the route.
- */
-export function createApiKeyMiddleware({ db }: ApiKeyAuthOptions) {
+export function createApiKeyMiddleware() {
   return async function apiKeyMiddleware(
     req: Request,
     res: Response,
@@ -52,14 +42,12 @@ export function createApiKeyMiddleware({ db }: ApiKeyAuthOptions) {
     }
 
     const keyHash = hashApiKey(raw);
-    const snap = await db.collection(COLLECTION).doc(keyHash).get();
-    if (!snap.exists) {
+    const pid = await repo.getApiKeyProject(keyHash);
+    if (!pid) {
       res.status(401).json({ error: "Invalid API key" });
       return;
     }
-
-    const data = snap.data() as { projectId?: string };
-    if (data.projectId !== projectId) {
+    if (pid !== projectId) {
       res.status(403).json({
         error: "API key is not authorized for this project",
       });
@@ -69,5 +57,3 @@ export function createApiKeyMiddleware({ db }: ApiKeyAuthOptions) {
     next();
   };
 }
-
-export { hashApiKey, COLLECTION as INTEGRATION_API_KEYS_COLLECTION };

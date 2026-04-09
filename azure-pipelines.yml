@@ -1,0 +1,40 @@
+# Azure DevOps pipeline — template. Replace $(azureServiceConnection), $(resourceGroup),
+# $(baseName), secrets, and environment names with your subscription values.
+#
+# Typical flow:
+# 1. Build: npm ci && npm run build (frontend), cd api && npm ci && npm run build (API).
+# 2. Deploy infra: az deployment group create --template-file infra/main.bicep ...
+# 3. Run migrations: cd api && AZURE_SQL_CONNECTION_STRING=... npm run migrate
+# 4. Deploy API zip to App Service (Linux Node 20), startup: node server.js from dist layout.
+# 5. Host SPA: Azure Static Web Apps, Storage static website, or App Service — set VITE_API_BASE_URL to the API URL.
+
+trigger:
+  branches:
+    include:
+      - main
+
+variables:
+  nodeVersion: "20.x"
+
+stages:
+  - stage: Build
+    jobs:
+      - job: BuildAll
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - task: NodeTool@0
+            inputs:
+              versionSpec: $(nodeVersion)
+          - script: npm ci && npm run build
+            displayName: Build frontend (Vite)
+          - script: cd api && npm ci && npm run build && npm test
+            displayName: Build and test API
+          - task: PublishBuildArtifacts@1
+            inputs:
+              PathtoPublish: dist
+              ArtifactName: frontend-dist
+          - task: PublishBuildArtifacts@1
+            inputs:
+              PathtoPublish: api/dist
+              ArtifactName: api-dist

@@ -5,7 +5,7 @@ import { useProjectStore } from "@/store/project-store";
 
 /** Keeps `useProjectStore` in sync with Firestore for the signed-in user. Admins receive all projects; others only projects they belong to. */
 export function useProjectsSync() {
-  const uid = useAuthStore((s) => s.firebaseUser?.uid);
+  const uid = useAuthStore((s) => s.account?.localAccountId);
   const profile = useAuthStore((s) => s.profile);
   const profileLoading = useAuthStore((s) => s.profileLoading);
 

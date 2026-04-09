@@ -3,7 +3,7 @@ import { Navigate, Outlet } from "react-router-dom";
 import { useAuthStore } from "@/store/auth-store";
 
 export function ProtectedRoute() {
-  const firebaseUser = useAuthStore((s) => s.firebaseUser);
+  const account = useAuthStore((s) => s.account);
   const authLoading = useAuthStore((s) => s.authLoading);
 
   if (authLoading) {
@@ -14,7 +14,7 @@ export function ProtectedRoute() {
     );
   }
 
-  if (!firebaseUser) {
+  if (!account) {
     return <Navigate to="/login" replace />;
   }
 

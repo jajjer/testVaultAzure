@@ -1,7 +1,3 @@
-/**
- * Resolve Firestore test case id from a run's T number (runTestNumbers map).
- * T numbers are unique within a run's mapping (and project-wide in storage).
- */
 export function caseIdForRunTestNumber(
   runTestNumbers: Record<string, number> | undefined,
   runTestNumber: number

@@ -135,7 +135,7 @@ export function TestCaseDialog({
 
   const createTestCase = useTestCaseStore((s) => s.createTestCase);
   const updateTestCase = useTestCaseStore((s) => s.updateTestCase);
-  const firebaseUser = useAuthStore((s) => s.firebaseUser);
+  const account = useAuthStore((s) => s.account);
   const sections = useSectionStore((s) => s.sections);
   const folderOptions = flattenSectionsDepthFirst(buildSectionTree(sections));
   const project = useProjectStore((s) =>
@@ -194,7 +194,7 @@ export function TestCaseDialog({
     const steps = rowsToSteps(stepRows);
     const customFields = rowsToCustomFields(cfRows);
 
-    const ownerUid = firebaseUser?.uid;
+    const ownerUid = account?.localAccountId;
     if (mode === "create" && !ownerUid) return;
 
     setSubmitting(true);

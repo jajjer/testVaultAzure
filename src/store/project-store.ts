@@ -1,16 +1,6 @@
-import {
-  addDoc,
-  collection,
-  doc,
-  onSnapshot,
-  query,
-  updateDoc,
-  where,
-  type Unsubscribe,
-} from "firebase/firestore";
 import { create } from "zustand";
 
-import { getFirestoreDb } from "@/lib/firebase";
+import { apiJson } from "@/lib/api";
 import type {
   ProjectDoc,
   ProjectMember,
@@ -21,10 +11,8 @@ import type {
 interface ProjectState {
   projects: ProjectDoc[];
   loading: boolean;
-  /** Set when the Firestore listener fails (e.g. permission or rules/query mismatch). */
   error: string | null;
-  /** For `admin`, subscribes to all projects; otherwise projects where the user is a member. */
-  listen: (uid: string, role: UserRole) => Unsubscribe;
+  listen: (uid: string, role: UserRole) => () => void;
   stop: () => void;
   createProject: (input: {
     name: string;
@@ -41,17 +29,18 @@ interface ProjectState {
       name: string;
       description: string;
       parameters: ProjectParameter[];
-      /** When provided (e.g. admin save), replaces project test case priority list. */
       testCasePriorityOptions?: string[];
-      /** When provided, replaces project test case type list. */
       testCaseTypeOptions?: string[];
     }
   ) => Promise<void>;
 }
 
-let activeUnsub: Unsubscribe | null = null;
-/** Avoid clearing the project list when React Strict Mode re-subscribes the same user. */
+let pollTimer: ReturnType<typeof setInterval> | null = null;
 let lastListenUid: string | null = null;
+
+async function loadProjects(): Promise<ProjectDoc[]> {
+  return apiJson<ProjectDoc[]>("/api/projects");
+}
 
 export const useProjectStore = create<ProjectState>((set) => ({
   projects: [],
@@ -59,11 +48,11 @@ export const useProjectStore = create<ProjectState>((set) => ({
   error: null,
 
   listen: (uid: string, role: UserRole) => {
-    if (activeUnsub) {
-      activeUnsub();
-      activeUnsub = null;
+    void role;
+    if (pollTimer) {
+      clearInterval(pollTimer);
+      pollTimer = null;
     }
-    // Only wipe list when switching accounts — not on dev double-mount / resubscribe.
     if (lastListenUid !== uid) {
       set({ projects: [], loading: true, error: null });
       lastListenUid = uid;
@@ -71,140 +60,64 @@ export const useProjectStore = create<ProjectState>((set) => ({
       set({ loading: true, error: null });
     }
 
-    const coll = collection(getFirestoreDb(), "projects");
-    const q =
-      role === "admin"
-        ? query(coll)
-        : query(coll, where("memberIds", "array-contains", uid));
-    const unsub = onSnapshot(
-      q,
-      (snap) => {
-        const projects: ProjectDoc[] = snap.docs.map((d) => {
-          const data = d.data() as Omit<ProjectDoc, "id" | "parameters"> & {
-            parameters?: ProjectParameter[];
-            nextCaseNumber?: number;
-            nextRunTestNumber?: number;
-            testCasePriorityOptions?: unknown;
-            testCaseTypeOptions?: unknown;
-          };
-          return {
-            id: d.id,
-            ...data,
-            parameters: data.parameters ?? [],
-            nextCaseNumber:
-              typeof data.nextCaseNumber === "number" && data.nextCaseNumber >= 1
-                ? data.nextCaseNumber
-                : 1,
-            nextRunTestNumber:
-              typeof data.nextRunTestNumber === "number" &&
-              data.nextRunTestNumber >= 1
-                ? data.nextRunTestNumber
-                : 1,
-            testCasePriorityOptions: Array.isArray(data.testCasePriorityOptions)
-              ? data.testCasePriorityOptions.map((x) => String(x))
-              : undefined,
-            testCaseTypeOptions: Array.isArray(data.testCaseTypeOptions)
-              ? data.testCaseTypeOptions.map((x) => String(x))
-              : undefined,
-          };
+    const tick = () => {
+      void loadProjects()
+        .then((projects) => {
+          projects.sort((a, b) => b.updatedAt - a.updatedAt);
+          set({ projects, loading: false, error: null });
+        })
+        .catch((err) => {
+          const message =
+            err instanceof Error ? err.message : "Failed to load projects.";
+          set({ loading: false, error: message });
         });
-        projects.sort((a, b) => b.updatedAt - a.updatedAt);
-        set({ projects, loading: false, error: null });
-      },
-      (err) => {
-        console.error("[TestVault] projects listener:", err);
-        const message =
-          err instanceof Error ? err.message : "Failed to load projects.";
-        set({ loading: false, error: message });
+    };
+    tick();
+    pollTimer = setInterval(tick, 3000);
+
+    return () => {
+      if (pollTimer) {
+        clearInterval(pollTimer);
+        pollTimer = null;
       }
-    );
-    activeUnsub = unsub;
-    return unsub;
+    };
   },
 
   stop: () => {
     lastListenUid = null;
-    if (activeUnsub) {
-      activeUnsub();
-      activeUnsub = null;
+    if (pollTimer) {
+      clearInterval(pollTimer);
+      pollTimer = null;
     }
     set({ projects: [], loading: true, error: null });
   },
 
-  createProject: async ({ name, description, owner }) => {
-    const now = Date.now();
-    const member: ProjectMember = {
-      uid: owner.uid,
-      email: owner.email,
-      role: owner.role,
-      addedAt: now,
-    };
-    const ref = await addDoc(collection(getFirestoreDb(), "projects"), {
-      name,
-      description,
-      parameters: [],
-      nextCaseNumber: 1,
-      nextRunTestNumber: 1,
-      memberIds: [owner.uid],
-      members: [member],
-      createdBy: owner.uid,
-      createdAt: now,
-      updatedAt: now,
+  createProject: async ({ name, description }) => {
+    const res = await apiJson<{ id: string }>("/api/projects", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, description }),
     });
-    const id = ref.id;
-    const doc: ProjectDoc = {
-      id,
-      name,
-      description,
-      parameters: [],
-      nextCaseNumber: 1,
-      nextRunTestNumber: 1,
-      memberIds: [owner.uid],
-      members: [member],
-      createdBy: owner.uid,
-      createdAt: now,
-      updatedAt: now,
-    };
-    set((state) => ({
-      projects: [doc, ...state.projects.filter((p) => p.id !== id)],
-      loading: false,
-      error: null,
-    }));
-    return id;
+    const projects = await loadProjects();
+    projects.sort((a, b) => b.updatedAt - a.updatedAt);
+    set({ projects, loading: false, error: null });
+    return res.id;
   },
 
   updateProject: async (projectId, updates) => {
-    const now = Date.now();
-    await updateDoc(doc(getFirestoreDb(), "projects", projectId), {
-      name: updates.name,
-      description: updates.description,
-      parameters: updates.parameters,
-      updatedAt: now,
-      ...(updates.testCasePriorityOptions !== undefined
-        ? { testCasePriorityOptions: updates.testCasePriorityOptions }
-        : {}),
-      ...(updates.testCaseTypeOptions !== undefined
-        ? { testCaseTypeOptions: updates.testCaseTypeOptions }
-        : {}),
+    const doc = await apiJson<ProjectDoc>(`/api/projects/${projectId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: updates.name,
+        description: updates.description,
+        parameters: updates.parameters,
+        testCasePriorityOptions: updates.testCasePriorityOptions,
+        testCaseTypeOptions: updates.testCaseTypeOptions,
+      }),
     });
     set((state) => ({
-      projects: state.projects.map((p) =>
-        p.id === projectId
-          ? {
-              ...p,
-              name: updates.name,
-              description: updates.description,
-              parameters: updates.parameters,
-              updatedAt: now,
-              ...(updates.testCasePriorityOptions !== undefined
-                ? { testCasePriorityOptions: updates.testCasePriorityOptions }
-                : {}),
-              ...(updates.testCaseTypeOptions !== undefined
-                ? { testCaseTypeOptions: updates.testCaseTypeOptions }
-                : {}),
-            }
-          : p
-      ),
+      projects: state.projects.map((p) => (p.id === projectId ? doc : p)),
     }));
   },
 }));

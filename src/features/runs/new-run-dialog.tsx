@@ -170,7 +170,7 @@ export function NewRunDialog({
   const sectionsLoading = useSectionStore((s) => s.loading);
   const createRun = useTestRunStore((s) => s.createRun);
   const updateRun = useTestRunStore((s) => s.updateRun);
-  const firebaseUser = useAuthStore((s) => s.firebaseUser);
+  const account = useAuthStore((s) => s.account);
   const wasOpenRef = useRef(false);
 
   const isEdit = editingRun != null;
@@ -246,14 +246,14 @@ export function NewRunDialog({
       return;
     }
 
-    if (!firebaseUser?.uid) return;
+    if (!account?.localAccountId) return;
 
     setSubmitting(true);
     try {
       await createRun(projectId, {
         name: trimmed,
         caseIds,
-        createdBy: firebaseUser.uid,
+        createdBy: account.localAccountId,
       });
       onOpenChange(false);
     } finally {

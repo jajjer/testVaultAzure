@@ -1,17 +1,22 @@
+import cors from "cors";
 import express from "express";
-import type { Firestore } from "firebase-admin/firestore";
 
-import { createProjectApiRouter } from "./routes/apiV1.js";
+import { createBlobRouter } from "./routes/blobRoutes.js";
+import { createIntegrationRouter } from "./routes/integrationApi.js";
+import { createWebRouter } from "./routes/webApi.js";
 
-export function createApp(db: Firestore): express.Application {
+export function createApp(): express.Application {
   const app = express();
-  app.use(express.json({ limit: "1mb" }));
+  app.use(cors());
+  app.use(express.json({ limit: "10mb" }));
 
   app.get("/health", (_req, res) => {
     res.status(200).type("text/plain").send("ok");
   });
 
-  app.use("/api/v1/projects/:projectId", createProjectApiRouter(db));
+  app.use("/api", createWebRouter());
+  app.use("/api/v1/projects/:projectId", createIntegrationRouter());
+  app.use("/api", createBlobRouter());
 
   app.use(
     (

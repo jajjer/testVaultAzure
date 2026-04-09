@@ -3,5 +3,5 @@ node_modules
 dist
 *.local
 .DS_Store
-functions/node_modules
-functions/lib
+api/node_modules
+api/dist

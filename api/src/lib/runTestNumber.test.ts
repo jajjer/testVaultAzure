@@ -4,9 +4,7 @@ import { caseIdForRunTestNumber } from "./runTestNumber.js";
 
 describe("caseIdForRunTestNumber", () => {
   it("returns case id for matching T", () => {
-    expect(
-      caseIdForRunTestNumber({ a: 1, b: 5 }, 5)
-    ).toBe("b");
+    expect(caseIdForRunTestNumber({ a: 1, b: 5 }, 5)).toBe("b");
   });
 
   it("returns undefined when T not in map", () => {

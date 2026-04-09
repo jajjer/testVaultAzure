@@ -1,21 +1,12 @@
-import {
-  collection,
-  doc,
-  getDoc,
-  onSnapshot,
-  setDoc,
-  type Unsubscribe,
-} from "firebase/firestore";
 import { create } from "zustand";
 
-import { getFirestoreDb } from "@/lib/firebase";
+import { apiJson } from "@/lib/api";
 import type { TestResultDoc, TestResultOutcome } from "@/types/models";
 
 interface TestResultState {
-  /** Result docs for the active run, keyed by case id. */
   resultsByCaseId: Record<string, TestResultDoc>;
   loading: boolean;
-  listen: (projectId: string, runId: string) => Unsubscribe;
+  listen: (projectId: string, runId: string) => () => void;
   stop: () => void;
   setRunResult: (
     projectId: string,
@@ -28,7 +19,7 @@ interface TestResultState {
   ) => Promise<void>;
 }
 
-let activeUnsub: Unsubscribe | null = null;
+let pollTimer: ReturnType<typeof setInterval> | null = null;
 let lastKey: string | null = null;
 
 function isOutcome(v: unknown): v is TestResultOutcome {
@@ -76,9 +67,9 @@ export const useTestResultStore = create<TestResultState>((set) => ({
   loading: true,
 
   listen: (projectId: string, runId: string) => {
-    if (activeUnsub) {
-      activeUnsub();
-      activeUnsub = null;
+    if (pollTimer) {
+      clearInterval(pollTimer);
+      pollTimer = null;
     }
 
     const key = `${projectId}/${runId}`;
@@ -89,76 +80,47 @@ export const useTestResultStore = create<TestResultState>((set) => ({
       set({ loading: true });
     }
 
-    const db = getFirestoreDb();
-    const q = collection(
-      db,
-      "projects",
-      projectId,
-      "runs",
-      runId,
-      "results"
-    );
+    const tick = () => {
+      void apiJson<Record<string, Record<string, unknown>>>(
+        `/api/projects/${projectId}/runs/${runId}/results`
+      )
+        .then((raw) => {
+          const resultsByCaseId: Record<string, TestResultDoc> = {};
+          for (const [caseId, data] of Object.entries(raw)) {
+            resultsByCaseId[caseId] = normalizeResult(caseId, data);
+          }
+          set({ resultsByCaseId, loading: false });
+        })
+        .catch(() => set({ loading: false }));
+    };
+    tick();
+    pollTimer = setInterval(tick, 3000);
 
-    const unsub = onSnapshot(
-      q,
-      (snap) => {
-        const resultsByCaseId: Record<string, TestResultDoc> = {};
-        snap.docs.forEach((d) => {
-          resultsByCaseId[d.id] = normalizeResult(d.id, d.data());
-        });
-        set({ resultsByCaseId, loading: false });
-      },
-      (err) => {
-        console.error("[TestVault] run results listener:", err);
-        set({ loading: false });
+    return () => {
+      if (pollTimer) {
+        clearInterval(pollTimer);
+        pollTimer = null;
       }
-    );
-    activeUnsub = unsub;
-    return unsub;
+    };
   },
 
   stop: () => {
     lastKey = null;
-    if (activeUnsub) {
-      activeUnsub();
-      activeUnsub = null;
+    if (pollTimer) {
+      clearInterval(pollTimer);
+      pollTimer = null;
     }
     set({ resultsByCaseId: {}, loading: true });
   },
 
   setRunResult: async (projectId, runId, caseId, input) => {
-    const db = getFirestoreDb();
-    const ref = doc(
-      db,
-      "projects",
-      projectId,
-      "runs",
-      runId,
-      "results",
-      caseId
-    );
-    const now = Date.now();
-    const snap = await getDoc(ref);
-    const prev = snap.exists() ? snap.data() : {};
-    const prevAttachments = Array.isArray(prev.attachments)
-      ? prev.attachments
-      : [];
-
-    await setDoc(
-      ref,
+    await apiJson(
+      `/api/projects/${projectId}/runs/${runId}/results/${caseId}`,
       {
-        caseId,
-        runId,
-        projectId,
-        outcome: input.outcome,
-        comment: String(prev.comment ?? ""),
-        attachments: prevAttachments,
-        executedBy:
-          input.outcome !== null ? input.executedByUid : null,
-        executedAt: input.outcome !== null ? now : null,
-        updatedAt: now,
-      },
-      { merge: true }
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ outcome: input.outcome }),
+      }
     );
   },
 }));

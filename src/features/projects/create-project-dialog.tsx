@@ -23,25 +23,25 @@ export function CreateProjectDialog() {
   const [description, setDescription] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const profile = useAuthStore((s) => s.profile);
-  const firebaseUser = useAuthStore((s) => s.firebaseUser);
+  const account = useAuthStore((s) => s.account);
   const createProject = useProjectStore((s) => s.createProject);
   const navigate = useNavigate();
 
   const canCreate =
-    profile && firebaseUser && canManageContent(profile.role);
+    profile && account && canManageContent(profile.role);
 
   if (!canCreate) return null;
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!firebaseUser || !profile) return;
+    if (!account || !profile) return;
     setSubmitting(true);
     try {
       const id = await createProject({
         name: name.trim(),
         description: description.trim(),
         owner: {
-          uid: firebaseUser.uid,
+          uid: account.localAccountId,
           email: profile.email,
           role: profile.role,
         },

@@ -1,12 +1,5 @@
-import {
-  addDoc,
-  collection,
-  getDocs,
-  type DocumentReference,
-} from "firebase/firestore";
-
+import { apiJson } from "@/lib/api";
 import { ensureDefaultSuite } from "@/lib/ensure-default-suite";
-import { getFirestoreDb } from "@/lib/firebase";
 import { DEFAULT_SECTION_ID, DEFAULT_SUITE_ID } from "@/lib/test-case-defaults";
 
 /** In-memory folder list used during import (mutated as new folders are created). */
@@ -29,33 +22,21 @@ function findChild(
 }
 
 async function loadSections(projectId: string): Promise<TestRailSectionRow[]> {
-  const db = getFirestoreDb();
-  const snap = await getDocs(
-    collection(
-      db,
-      "projects",
-      projectId,
-      "suites",
-      DEFAULT_SUITE_ID,
-      "sections"
-    )
+  const rows = await apiJson<Record<string, unknown>[]>(
+    `/api/projects/${projectId}/sections`
   );
-  return snap.docs.map((d) => {
-    const data = d.data() as {
-      parentSectionId?: string | null;
-      name?: string;
-      order?: number;
-    };
-    return {
-      id: d.id,
-      parentSectionId:
-        data.parentSectionId === undefined || data.parentSectionId === null
-          ? null
-          : String(data.parentSectionId),
-      name: String(data.name ?? ""),
-      order: typeof data.order === "number" ? data.order : 0,
-    };
-  });
+  return rows
+    .filter((row) => String(row.suiteId ?? DEFAULT_SUITE_ID) === DEFAULT_SUITE_ID)
+    .map((row) => {
+      const parent = row.parentSectionId;
+      return {
+        id: String(row.id),
+        parentSectionId:
+          parent === null || parent === undefined ? null : String(parent),
+        name: String(row.name ?? ""),
+        order: typeof row.order === "number" ? row.order : 0,
+      };
+    });
 }
 
 /**
@@ -72,19 +53,10 @@ export async function ensureSectionPathForImport(
   if (segs.length === 0) return DEFAULT_SECTION_ID;
 
   await ensureDefaultSuite(projectId);
-  const db = getFirestoreDb();
-  const coll = collection(
-    db,
-    "projects",
-    projectId,
-    "suites",
-    DEFAULT_SUITE_ID,
-    "sections"
-  );
 
   let parentId: string | null = null;
-  for (const name of segs) {
-    let found = findChild(sections, parentId, name);
+  for (const segmentName of segs) {
+    let found = findChild(sections, parentId, segmentName);
     if (!found) {
       const siblings = sections.filter(
         (s) => (s.parentSectionId ?? null) === parentId
@@ -93,21 +65,22 @@ export async function ensureSectionPathForImport(
         siblings.length === 0
           ? 0
           : Math.max(...siblings.map((s) => s.order)) + 1;
-      const now = Date.now();
-      const payload = {
-        projectId,
-        suiteId: DEFAULT_SUITE_ID,
-        parentSectionId: parentId,
-        name: name.trim(),
-        order: nextOrder,
-        createdAt: now,
-        updatedAt: now,
-      };
-      const docRef: DocumentReference = await addDoc(coll, payload);
+      const resp: { id: string } = await apiJson<{ id: string }>(
+        `/api/projects/${projectId}/sections`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: segmentName.trim(),
+            parentSectionId: parentId,
+            order: nextOrder,
+          }),
+        }
+      );
       found = {
-        id: docRef.id,
+        id: resp.id,
         parentSectionId: parentId,
-        name: name.trim(),
+        name: segmentName.trim(),
         order: nextOrder,
       };
       sections.push(found);
